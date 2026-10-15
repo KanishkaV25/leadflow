@@ -1,8 +1,7 @@
 
 "use client";
-
-import { useMemo, useState } from "react";
-
+import { useEffect, useMemo, useState } from "react";
+import { apiRequest } from "@/lib/api";
 const statuses = [
   "All",
   "New",
@@ -15,46 +14,49 @@ const statuses = [
 
 type Status = Exclude<(typeof statuses)[number], "All">;
 
+
 type Lead = {
   id: number;
   name: string;
-  company: string;
-  status: Status;
-  note: string;
-  followUp: string | null;
+  company: string | null;
+  phone: string | null;
+  status:
+    | "New"
+    | "Contacted"
+    | "Qualified"
+    | "Proposal Sent"
+    | "Won"
+    | "Lost";
+  next_follow_up_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-const initialLeads: Lead[] = [
-  {
-    id: 1,
-    name: "Sarah Connor",
-    company: "Acme Corp",
-    status: "Proposal Sent",
-    note: "Sent pricing proposal for review.",
-    followUp: "2026-10-16T10:00:00+05:30",
-  },
-  {
-    id: 2,
-    name: "Hank Scorpio",
-    company: "Globex",
-    status: "New",
-    note: "Inbound lead from website.",
-    followUp: null,
-  },
-  {
-    id: 3,
-    name: "Diana Prince",
-    company: "Themyscira Consulting",
-    status: "Qualified",
-    note: "Discussing requirements.",
-    followUp: null,
-  },
-];
 
 export default function Home() {
-  const [leads, setLeads] = useState(initialLeads);
-  const [filter, setFilter] = useState("All");
-  const [search, setSearch] = useState("");
+  
+const [leads, setLeads] = useState<Lead[]>([]);
+const [filter, setFilter] = useState("All");
+const [search, setSearch] = useState("");
+const [loading, setLoading] = useState(true);
+const [error, setError] = useState("");
+const [showAddLead, setShowAddLead] = useState(false);
+const [newName, setNewName] = useState("");
+const [newCompany, setNewCompany] = useState("");
+const [newPhone, setNewPhone] = useState("");
+const [savingLead, setSavingLead] = useState(false);
+const [formError, setFormError] = useState("");
+
+useEffect(() => {
+  apiRequest<Lead[]>("/api/leads")
+    .then(setLeads)
+    .catch((err: unknown) => {
+      setError(
+        err instanceof Error ? err.message : "Could not load leads."
+      );
+    })
+    .finally(() => setLoading(false));
+}, []);
 
   const visibleLeads = useMemo(() => {
     return leads.filter((lead) => {
@@ -68,12 +70,63 @@ export default function Home() {
     });
   }, [leads, filter, search]);
 
-  const today = new Date().toDateString();
+ 
 
-  const todaysFollowUps = leads.filter((lead) => {
-    if (!lead.followUp) return false;
-    return new Date(lead.followUp).toDateString() === today;
-  });
+  
+
+const [today, setToday] = useState<string | null>(null);
+
+useEffect(() => {
+  setToday(new Date().toDateString());
+}, []);
+
+const todaysFollowUps = leads.filter((lead) => {
+  if (!today || !lead.next_follow_up_at) return false;
+
+  return (
+    new Date(lead.next_follow_up_at).toDateString() === today
+  );
+});
+
+async function handleAddLead(e: React.FormEvent<HTMLFormElement>) {
+  e.preventDefault();
+  setFormError("");
+
+  const name = newName.trim();
+
+  if (!name) {
+    setFormError("Lead name is required.");
+    return;
+  }
+
+  setSavingLead(true);
+
+  try {
+    const created = await apiRequest<Lead>("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        company: newCompany.trim() || null,
+        phone: newPhone.trim() || null,
+      }),
+    });
+
+    setLeads((current) => [created, ...current]);
+    setShowAddLead(false);
+    setNewName("");
+    setNewCompany("");
+    setNewPhone("");
+  } catch (err) {
+    setFormError(
+      err instanceof Error ? err.message : "Could not create lead."
+    );
+  } finally {
+    setSavingLead(false);
+  }
+}
+
+
+
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 text-slate-900 md:p-10">
@@ -90,10 +143,34 @@ export default function Home() {
               Keep every conversation moving forward.
             </p>
           </div>
-          <span className="rounded-full bg-white px-4 py-2 text-sm shadow-sm">
-            {leads.length} leads
-          </span>
+         
+<div className="flex items-center gap-3">
+  <button
+    onClick={() => {
+      setFormError("");
+      setShowAddLead(true);
+    }}
+    className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+  >
+    + Add New Lead
+  </button>
+
+  <span className="rounded-full bg-white px-4 py-2 text-sm shadow-sm">
+    {leads.length} leads
+  </span>
+</div>
+
+
         </header>
+
+{loading && <p>Loading leads...</p>}
+
+{error && (
+  <p className="text-red-600">
+    Could not load leads: {error}
+  </p>
+)}
+
 
         <section className="grid gap-4 sm:grid-cols-3">
           <Stat label="Total leads" value={leads.length} />
@@ -161,6 +238,87 @@ export default function Home() {
               </button>
             ))}
           </div>
+
+{showAddLead && (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    onMouseDown={(e) => {
+      if (e.target === e.currentTarget) {
+        setShowAddLead(false);
+      }
+    }}
+  >
+    <form
+      onSubmit={handleAddLead}
+      className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <div>
+        <h2 className="text-xl font-bold">Add New Lead</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Add someone to your sales pipeline.
+        </p>
+      </div>
+
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">Name *</span>
+        <input
+          required
+          maxLength={120}
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Enter lead name"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+        />
+      </label>
+
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">Company (optional)</span>
+        <input
+          maxLength={120}
+          value={newCompany}
+          onChange={(e) => setNewCompany(e.target.value)}
+          placeholder="Company name"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+        />
+      </label>
+
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">Phone (optional)</span>
+        <input
+          maxLength={40}
+          value={newPhone}
+          onChange={(e) => setNewPhone(e.target.value)}
+          placeholder="Phone number"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2"
+        />
+      </label>
+
+      {formError && (
+        <p role="alert" className="text-sm text-red-600">
+          {formError}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={() => setShowAddLead(false)}
+          className="rounded-lg border border-slate-300 px-4 py-2"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="submit"
+          disabled={savingLead}
+          className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white disabled:opacity-50"
+        >
+          {savingLead ? "Saving..." : "Create Lead"}
+        </button>
+      </div>
+    </form>
+  </div>
+)}
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             {visibleLeads.length === 0 ? (
