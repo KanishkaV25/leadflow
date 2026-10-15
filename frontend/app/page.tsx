@@ -30,6 +30,21 @@ type Lead = {
   next_follow_up_at: string | null;
   created_at: string;
   updated_at: string;
+last_discussion_note: string | null;
+last_discussion_at: string | null;
+};
+
+type Discussion = {
+  id: number;
+  lead_id: number;
+  note: string;
+  created_at: string;
+  follow_up_at: string | null;
+};
+
+type DiscussionCreateResponse = {
+  discussion: Discussion;
+  lead: Lead;
 };
 
 
@@ -46,6 +61,17 @@ const [newCompany, setNewCompany] = useState("");
 const [newPhone, setNewPhone] = useState("");
 const [savingLead, setSavingLead] = useState(false);
 const [formError, setFormError] = useState("");
+
+const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+const [discussions, setDiscussions] = useState<Discussion[]>([]);
+const [loadingDiscussions, setLoadingDiscussions] = useState(false);
+const [discussionError, setDiscussionError] = useState("");
+const [note, setNote] = useState("");
+const [followUpDate, setFollowUpDate] = useState("");
+const [followUpTime, setFollowUpTime] = useState("");
+const [savingDiscussion, setSavingDiscussion] = useState(false);
+const [statusSaving, setStatusSaving] = useState(false);
+
 
 useEffect(() => {
   apiRequest<Lead[]>("/api/leads")
@@ -125,6 +151,132 @@ async function handleAddLead(e: React.FormEvent<HTMLFormElement>) {
   }
 }
 
+
+async function openLeadDetails(lead: Lead) {
+  setSelectedLead(lead);
+  setDiscussions([]);
+  setNote("");
+  setFollowUpDate("");
+  setFollowUpTime("");
+  setDiscussionError("");
+  setLoadingDiscussions(true);
+
+  try {
+    const history = await apiRequest<Discussion[]>(
+      `/api/leads/${lead.id}/discussions`
+    );
+    setDiscussions(history);
+  } catch (err) {
+    setDiscussionError(
+      err instanceof Error
+        ? err.message
+        : "Could not load discussion history."
+    );
+  } finally {
+    setLoadingDiscussions(false);
+  }
+}
+
+function closeLeadDetails() {
+  setSelectedLead(null);
+  setDiscussions([]);
+  setDiscussionError("");
+}
+
+async function handleStatusChange(newStatus: Lead["status"]) {
+  if (!selectedLead || newStatus === selectedLead.status) return;
+
+  setStatusSaving(true);
+  setDiscussionError("");
+
+  try {
+    const updated = await apiRequest<Lead>(
+      `/api/leads/${selectedLead.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status: newStatus }),
+      }
+    );
+
+    setSelectedLead(updated);
+    setLeads((current) =>
+      current.map((lead) =>
+        lead.id === updated.id ? { ...lead, ...updated } : lead
+      )
+    );
+  } catch (err) {
+    setDiscussionError(
+      err instanceof Error ? err.message : "Could not update status."
+    );
+  } finally {
+    setStatusSaving(false);
+  }
+}
+
+async function handleAddDiscussion(e: React.FormEvent<HTMLFormElement>) {
+  e.preventDefault();
+
+  if (!selectedLead) return;
+
+  const cleanNote = note.trim();
+
+  if (!cleanNote) {
+    setDiscussionError("Please enter a discussion note.");
+    return;
+  }
+
+  if (Boolean(followUpDate) !== Boolean(followUpTime)) {
+    setDiscussionError("Choose both a follow-up date and time, or leave both empty.");
+    return;
+  }
+
+  setSavingDiscussion(true);
+  setDiscussionError("");
+
+  try {
+    const followUpAt =
+      followUpDate && followUpTime
+        ? new Date(`${followUpDate}T${followUpTime}`).toISOString()
+        : null;
+
+    const result = await apiRequest<DiscussionCreateResponse>(
+      `/api/leads/${selectedLead.id}/discussions`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          note: cleanNote,
+          follow_up_at: followUpAt,
+        }),
+      }
+    );
+
+    setDiscussions((current) => [
+      result.discussion,
+      ...current.filter((item) => item.id !== result.discussion.id),
+    ]);
+
+    setSelectedLead(result.lead);
+    setLeads((current) =>
+      current.map((lead) =>
+        lead.id === result.lead.id
+          ? { ...lead, ...result.lead }
+          : lead
+      )
+    );
+
+    setNote("");
+    setFollowUpDate("");
+    setFollowUpTime("");
+  } catch (err) {
+    setDiscussionError(
+      err instanceof Error
+        ? err.message
+        : "Could not save the discussion."
+    );
+  } finally {
+    setSavingDiscussion(false);
+  }
+}
 
 
 
@@ -320,6 +472,166 @@ async function handleAddLead(e: React.FormEvent<HTMLFormElement>) {
   </div>
 )}
 
+{selectedLead && (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    onMouseDown={(e) => {
+      if (e.target === e.currentTarget) closeLeadDetails();
+    }}
+  >
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lead-dialog-title"
+      className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 id="lead-dialog-title" className="text-2xl font-bold">
+            {selectedLead.name}
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {selectedLead.company || "No company"}
+            {selectedLead.phone ? ` · ${selectedLead.phone}` : ""}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={closeLeadDetails}
+          aria-label="Close lead details"
+          className="rounded-lg border px-3 py-1.5 hover:bg-slate-50"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="mt-5">
+        <label className="block text-sm font-medium" htmlFor="lead-status">
+          Lead status
+        </label>
+        <select
+          id="lead-status"
+          value={selectedLead.status}
+          disabled={statusSaving}
+          onChange={(e) =>
+            handleStatusChange(e.target.value as Lead["status"])
+          }
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2"
+        >
+          {statuses.filter((s) => s !== "All").map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {discussionError && (
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          {discussionError}
+        </p>
+      )}
+
+      <div className="mt-6">
+        <h3 className="text-lg font-semibold">Discussion history</h3>
+
+        {loadingDiscussions ? (
+          <p className="mt-3 text-sm text-slate-500">
+            Loading discussion history...
+          </p>
+        ) : discussions.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-500">
+            No discussions yet. Add the first note below.
+          </p>
+        ) : (
+          <ol className="mt-3 space-y-3">
+            {discussions.map((item) => (
+              <li
+                key={item.id}
+                className="rounded-xl border border-slate-200 p-4"
+              >
+                <p className="whitespace-pre-wrap text-sm">{item.note}</p>
+                <p className="mt-2 text-xs text-slate-500">
+                  {new Date(item.created_at).toLocaleString()}
+                </p>
+                {item.follow_up_at && (
+                  <p className="mt-1 text-xs text-indigo-700">
+                    Follow-up:{" "}
+                    {new Date(item.follow_up_at).toLocaleString()}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <form onSubmit={handleAddDiscussion} className="mt-6 space-y-4">
+        <h3 className="text-lg font-semibold">Add a discussion</h3>
+
+        <label className="block space-y-1">
+          <span className="text-sm font-medium">Note *</span>
+          <textarea
+            required
+            maxLength={5000}
+            rows={4}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="What did you discuss with this lead?"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2"
+          />
+        </label>
+
+        <p className="text-sm text-slate-500">
+          Follow-up is optional. If you set one, choose both a date and time.
+        </p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Follow-up date</span>
+            <input
+              type="date"
+              value={followUpDate}
+              onChange={(e) => setFollowUpDate(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Follow-up time</span>
+            <input
+              type="time"
+              value={followUpTime}
+              onChange={(e) => setFollowUpTime(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={closeLeadDetails}
+            className="rounded-lg border border-slate-300 px-4 py-2"
+          >
+            Close
+          </button>
+
+          <button
+            type="submit"
+            disabled={savingDiscussion || loadingDiscussions}
+            className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white disabled:opacity-50"
+          >
+            {savingDiscussion ? "Saving..." : "Save discussion"}
+          </button>
+        </div>
+      </form>
+    </section>
+  </div>
+)}
+
+
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             {visibleLeads.length === 0 ? (
               <p className="p-8 text-center text-slate-500">
@@ -337,9 +649,18 @@ async function handleAddLead(e: React.FormEvent<HTMLFormElement>) {
                       <p className="text-sm text-slate-500">
                         {lead.company || "No company"}
                       </p>
-                      <p className="mt-2 text-sm text-slate-600">
-                        {lead.note || "No discussion yet"}
-                      </p>
+                      
+   <p className="mt-2 text-sm text-slate-600">
+     {lead.last_discussion_note ?? "No discussion yet"}
+   </p>
+
+   {lead.last_discussion_at && (
+     <p className="mt-1 text-xs text-slate-500">
+       Last discussion:{" "}
+       {new Date(lead.last_discussion_at).toLocaleString()}
+     </p>
+   )}
+   
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold">
@@ -347,9 +668,7 @@ async function handleAddLead(e: React.FormEvent<HTMLFormElement>) {
                       </span>
                       <button
                         className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
-                        onClick={() =>
-                          alert(`We'll add the discussion dialog for ${lead.name} next.`)
-                        }
+                       onClick={() => openLeadDetails(lead)}
                       >
                         View details
                       </button>

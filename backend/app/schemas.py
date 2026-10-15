@@ -67,3 +67,5 @@ class LeadOut(BaseModel):
     next_follow_up_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    last_discussion_note: str | None = None
+    last_discussion_at: datetime | None = None

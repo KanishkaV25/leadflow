@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+
 from pydantic import BaseModel
 
 from app.db import get_db
-from app.models import Lead
+
 from app.schemas import LeadCreate, LeadOut, LeadStatus
+
+from sqlalchemy.orm import Session, selectinload
+
+from app.models import Lead
 
 router = APIRouter(prefix="/api/leads", tags=["Leads"])
 
@@ -17,7 +21,9 @@ def list_leads(
     q: str | None = Query(default=None, max_length=120),
     db: Session = Depends(get_db),
 ):
-    statement = select(Lead)
+    statement = select(Lead).options(
+        selectinload(Lead.discussions)
+    )
 
     if status is not None:
         statement = statement.where(Lead.status == status.value)
@@ -28,8 +34,26 @@ def list_leads(
         )
 
     statement = statement.order_by(Lead.id.desc())
+    leads = db.scalars(statement).all()
 
-    return db.scalars(statement).all()
+    results = []
+
+    for lead in leads:
+        data = LeadOut.model_validate(lead).model_dump()
+
+        latest = lead.discussions[0] if lead.discussions else None
+
+        data["last_discussion_note"] = (
+            latest.note if latest else None
+        )
+        data["last_discussion_at"] = (
+            latest.created_at if latest else None
+        )
+
+        results.append(data)
+
+    return results
+
 
 
 @router.post("", response_model=LeadOut, status_code=201)
